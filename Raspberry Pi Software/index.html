@@ -1,0 +1,698 @@
+<!--This code is based on a project by Seb Lee-Delisle: http://seb.ly/2011/04/multi-touch-game-controller-in-javascripthtml5-for-ipad/-->
+<!doctype html>
+<html lang=en>
+<head>
+<meta charset=utf-8>
+<meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" /> 
+<meta name="mobile-web-app-capable" content="yes">
+<title>Touch Control</title>
+<style type="text/css"> 
+  
+  * {
+	  -webkit-touch-callout: none; /* prevent callout to copy image, etc when tap to hold */
+	  -webkit-text-size-adjust: none; /* prevent webkit from resizing text to fit */
+	/* make transparent link selection, adjust last value opacity 0 to 1.0 */
+	  -webkit-tap-highlight-color: rgba(0,0,0,0); 
+	  -webkit-user-select: none; /* prevent copy paste, to allow, change 'none' to 'text' */
+	  -webkit-tap-highlight-color: rgba(0,0,0,0); 
+	}
+	
+	body {
+		background-color: #000000;
+		margin: 0px;
+	}
+	canvas {
+		display:block; 
+		position:absolute; 
+		z-index: 1;
+	}
+	
+	.container {
+		width:auto;
+		text-align:center;
+		background-color:#ff0000;
+	}
+	/* Pose toggle switch (source: http://callmenick.com/post/css-toggle-switch-examples) */
+	.cmn-toggle {
+		position: absolute;
+		margin-left: -9999px;
+		visibility: hidden;
+	}
+	.cmn-toggle + label {
+		display: block;
+		position: relative;
+		cursor: pointer;
+		outline: none;
+		user-select: none;
+	}
+	input.cmn-toggle-round-flat + label {
+  	background-color: transparent;
+  	border-radius: 10%;
+		border: 2px;
+		border-style: solid;
+		border-color: white;
+		text-align:center;
+    
+		padding-top: 20%;
+    padding-bottom: 20%;
+    font-size: 16px;
+		margin: 5% 7% 5%;
+		cursor: pointer;
+		transition: background 0.4s;
+	}
+	input.cmn-toggle-round-flat:checked + label {
+		background-color: gray;
+	}
+	.cam_button {
+		background-color: transparent;
+		border-radius: 100%;
+		border: 7px;
+		border-style: solid;
+		border-color: white;
+		text-align:center;
+		
+		padding-top: 40%;
+    padding-bottom: 40%;
+    padding-left: 40%;
+    padding-right: 40%;
+		font-size: 16px;
+		margin: 50% 3% 4% 4%;
+		cursor: pointer;
+	}
+	
+	.cam_button:active {
+		background-color: gray;
+	}
+  
+  .off_button {
+    background-color: transparent;
+		border-radius: 10%;
+		border: 2px;
+		border-style: solid;
+		border-color: white;
+		text-align:center;
+		
+    padding-top: 20%;
+    padding-bottom: 20%;
+    font-size: 100%;
+    margin: 10% 7%;
+		cursor: pointer;
+	}
+  .off_button:active {
+  	background-color: gray;
+	}
+  
+  .light_button {
+  	background-color: transparent;
+		border-radius: 10%;
+		border: 2px;
+		border-style: solid;
+		border-color: white;
+		text-align:center;
+    
+		padding-top: 10%;
+		padding-bottom: 10%;
+		font-size: 16px;
+		margin: 40% 7% 10%;
+		cursor: pointer;
+	}
+	.light_button:checked {
+		background-color: #b1b;
+	}
+  
+	.sidenav {
+		color: #fff;
+		height: 100%;
+		width: 13%;
+		position: fixed;
+		z-index: 0;
+		top: 0px;
+		background-color: #111;
+		overflow-x: hidden;
+		padding-top: 0%;
+		font-family: 'Roboto', sans-serif;
+		display:flex;
+		flex-direction:column;
+		justify-content:space-around;
+	}
+  
+ 
+  
+	p#stream{
+		position: relative; 
+        top: -15px; 
+	}
+</style>
+<link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+
+</head>
+<ul id="messages"></ul>
+<script src="//code.jquery.com/jquery-1.12.4.min.js"></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/socket.io/3.1.0/socket.io.js"></script>
+<script>
+
+var Vector2 = function (x,y) {
+	
+	this.x = x || 0; 
+	this.y = y || 0; 
+	
+};
+
+Vector2.prototype = {
+
+	reset: function ( x, y ) {
+
+		this.x = x;
+		this.y = y;
+		return this;
+	},
+	
+	copyFrom : function (v) {
+		this.x = v.x;
+		this.y = v.y;
+	},
+	
+	plusEq : function (v) {
+		this.x+=v.x;
+		this.y+=v.y;
+		
+		return this; 
+	},
+	
+	minusEq : function (v) {
+		this.x-=v.x;
+		this.y-=v.y;
+		
+		return this; 
+	},
+		
+	equals : function (v) {
+		return((this.x==v.x)&&(this.y==v.x));
+	}
+
+};
+
+
+var canvas,
+ 	c, // c is the canvas' context 2D
+	container, 
+	halfWidth, 
+	halfHeight,
+	leftTouchID = -1, 
+	rightTouchID = -1, 
+	leftTouchPos = new Vector2(0,0),
+	rightTouchPos = new Vector2(0,0),
+	leftTouchStartPos = new Vector2(0,0),
+	rightTouchStartPos = new Vector2(0,0),
+	leftVector = new Vector2(0,0);
+	rightVector = new Vector2(0,0);
+
+var temperature;
+try {
+    var socket = io(); // comment this out for better debugging
+}
+catch(err){}
+
+var sendFlag = false;
+
+setupCanvas();
+
+var mouseX, mouseY, 
+	// is this running in a touch capable environment?
+	mouseDown = false,
+	leftMouseDown = false,
+	touchable = 'createTouch' in document,
+	touches = []; // array of touch vectors;
+
+setInterval(draw, 1000/30); // draw app at 30fps
+
+setInterval(sendControls, 1000/20); // send control input at 20fps
+
+var rotate = false;
+
+
+if(touchable) {
+	canvas.addEventListener( 'touchstart', onTouchStart, false );
+	canvas.addEventListener( 'touchmove', onTouchMove, false );
+	canvas.addEventListener( 'touchend', onTouchEnd, false );
+	window.onorientationchange = resetCanvas;  
+	window.onresize = resetCanvas;  
+} else {
+	
+	canvas.addEventListener( 'mousemove', onMouseMove, false );
+	canvas.addEventListener( 'mousedown', onMouseDown, false );
+	canvas.addEventListener( 'mouseup', onMouseUp, false );
+}
+
+function resetCanvas (e) {  
+ 	// resize the canvas - but remember - this clears the canvas too. 
+  	canvas.width = window.innerWidth; 
+	canvas.height = window.innerHeight;
+	
+	//halfWidth = canvas.width/2; 
+	halfWidth = canvas.width/2;
+
+	halfHeight = canvas.height/2;
+	
+	//make sure we scroll to the top left. 
+	window.scrollTo(0,0); 
+}
+
+var rawLeft, rawRight, MaxJoy = 255, MinJoy = -255, MaxValue = 255,
+	MinValue = -255, RawLeft, RawRight, ValLeft, ValRight;
+var leftMot = 0, rightMot = 0;
+
+function Remap(value, from1, to1, from2, to2){
+	return (value - from1) / (to1 - from1) * (to2 - from2) + from2;
+}
+
+function init(){
+	
+}
+
+function draw() {
+	
+	c.fillStyle = "white";
+	c.strokeStyle = "DodgerBlue";
+	c.lineWidth = "6";
+	
+	c.clearRect(0,0,canvas.width, canvas.height); 
+	//c.fillText("mouse : "+mouseX+", "+mouseY+", halfWidth: "+halfWidth, 10, 10);
+	//c.fillText("leftVector : "+leftVector.x+", "+leftVector.y, 10, 20);
+	//c.fillText("rightVector : "+rightVector.x+", "+rightVector.y, 10, 30);
+	//c.fillText("touches : "+touches[0]+" "+touches[1], 10, 40);
+	
+	if(touchable) {
+	
+		for(var i=0; i<touches.length; i++) {
+			
+			var touch = touches[i]; 
+			
+			if(touch.identifier == leftTouchID){
+				c.beginPath(); 
+				c.strokeStyle = "white"; 
+				c.lineWidth = 6; 
+				c.arc(leftTouchStartPos.x, leftTouchStartPos.y, 40,0,Math.PI*2,true); 
+				c.stroke();
+				c.beginPath(); 
+				c.strokeStyle = "white"; 
+				c.lineWidth = 2; 
+				c.arc(leftTouchStartPos.x, leftTouchStartPos.y, 60,0,Math.PI*2,true); 
+				c.stroke();
+				c.beginPath(); 
+				c.strokeStyle = "white"; 
+				c.arc(leftTouchPos.x, leftTouchPos.y, 40, 0,Math.PI*2, true); 
+				c.stroke(); 
+				
+				//c.fillText("LV: "+leftVector.x+", "+leftVector.y+" ident: "+touch.identifier, leftTouchPos.x, leftTouchPos.y-50);
+				
+				
+			} else if(touch.identifier == rightTouchID) {
+				c.beginPath(); 
+				c.strokeStyle = "DodgerBlue"; 
+				c.lineWidth = 6; 
+				c.arc(rightTouchStartPos.x, rightTouchStartPos.y, 40,0,Math.PI*2,true); 
+				c.stroke();
+				c.beginPath(); 
+				c.strokeStyle = "DodgerBlue"; 
+				c.lineWidth = 2; 
+				c.arc(rightTouchStartPos.x, rightTouchStartPos.y, 60,0,Math.PI*2,true); 
+				c.stroke();
+				c.beginPath(); 
+				c.strokeStyle = "DodgerBlue"; 
+				c.arc(rightTouchPos.x, rightTouchPos.y, 40, 0,Math.PI*2, true); 
+				c.stroke(); 
+
+				//c.fillText("RV: "+rightVector.x+", "+rightVector.y+" ident: "+touch.identifier, rightTouchPos.x, rightTouchPos.y-50);
+			}
+		}
+	} else {
+		
+		if(mouseDown){
+			var drawcolor = "white";
+			var TouchStartPos = leftTouchStartPos;
+			if(!leftMouseDown){
+				drawcolor = "DodgerBlue";
+				TouchStartPos = rightTouchStartPos;
+			}
+			c.beginPath(); 
+			c.strokeStyle = drawcolor; 
+			c.lineWidth = 6; 
+			c.arc(TouchStartPos.x, TouchStartPos.y, 40,0,Math.PI*2,true); 
+			c.stroke();
+			c.beginPath(); 
+			c.strokeStyle = drawcolor; 
+			c.lineWidth = 2; 
+			c.arc(TouchStartPos.x, TouchStartPos.y, 60,0,Math.PI*2,true); 
+			c.stroke();
+			c.beginPath(); 
+			c.strokeStyle = drawcolor; 
+			c.arc(TouchStartPos.x, TouchStartPos.y, 40, 0,Math.PI*2, true); 
+			c.stroke(); 
+					
+			c.fillStyle	 = drawcolor; 
+			//c.fillText("mouse : "+mouseX+", "+mouseY, mouseX, mouseY); 
+			c.beginPath(); 
+			c.strokeStyle = drawcolor;
+			c.lineWidth = "6";
+			c.arc(mouseX, mouseY, 40, 0, Math.PI*2, true); 
+			c.stroke();
+		}
+	}
+	
+	socket.on('temp', function(msg){
+		document.getElementById("temp").innerHTML = parseInt(msg) + '°C';
+		temperature = msg;
+	});
+
+	socket.on('volt', function(msg){
+		document.getElementById("volt").innerHTML = msg.toFixed(2) + 'V';
+		voltage = msg;
+	});
+
+	socket.on('cam', function(msg){
+		document.getElementById("stream").innerHTML = img;
+	});
+	
+	leftVector.x = Math.min(Math.max(parseInt(leftVector.x), -255), 255);
+	leftVector.y = Math.min(Math.max(parseInt(leftVector.y), -255), 255);
+	//c.fillText("Stick position: "+leftVector.x+"x "+leftVector.y+"y", 10, 10); 
+	
+	if(leftMot > 0) leftMot += 90;
+	if(leftMot < 0) leftMot -= 90;
+	if(rightMot > 0) rightMot += 90;
+	if(rightMot < 0) rightMot -= 90;
+	leftMot = Math.min(Math.max(parseInt(leftMot), -255), 255);
+	rightMot = Math.min(Math.max(parseInt(rightMot), -255), 255);
+	
+	//c.fillText("Left Motor: "+leftMot+" Right Motor: "+rightMot, 10, 20);
+	
+	//c.fillText("Temperature: "+temperature+"°C", 10, 30);
+	
+}
+
+/*	
+ *	Touch event (e) properties : 
+ *	e.touches: 			Array of touch objects for every finger currently touching the screen
+ *	e.targetTouches: 	Array of touch objects for every finger touching the screen that
+ *						originally touched down on the DOM object the transmitted the event.
+ *	e.changedTouches	Array of touch objects for touches that are changed for this event. 					
+ *						I'm not sure if this would ever be a list of more than one, but would 
+ *						be bad to assume. 
+ *
+ *	Touch objects : 
+ *
+ *	identifier: An identifying number, unique to each touch event
+ *	target: DOM object that broadcast the event
+ *	clientX: X coordinate of touch relative to the viewport (excludes scroll offset)
+ *	clientY: Y coordinate of touch relative to the viewport (excludes scroll offset)
+ *	screenX: Relative to the screen
+ *	screenY: Relative to the screen
+ *	pageX: Relative to the full page (includes scrolling)
+ *	pageY: Relative to the full page (includes scrolling)
+ */	
+
+function onTouchStart(e) {
+ 
+	for(var i = 0; i<e.changedTouches.length; i++){
+		var touch = e.changedTouches[i]; 
+		//console.log(leftTouchID + " " 
+		
+		if(touch.clientX <= halfWidth){			
+			leftTouchID = touch.identifier; 
+			leftTouchStartPos.reset(touch.clientX, touch.clientY); 	
+			leftTouchPos.copyFrom(leftTouchStartPos); 
+			leftVector.reset(0,0); 
+		}
+		else{
+			rightTouchID = touch.identifier; 
+			rightTouchStartPos.reset(touch.clientX, touch.clientY); 	
+			rightTouchPos.copyFrom(rightTouchStartPos); 
+			rightVector.reset(0,0); 
+		}
+		continue;
+	}
+	touches = e.touches; 
+}
+
+function onMouseDown(event) {
+	if(event.offsetX <= halfWidth){
+		leftTouchStartPos.reset(event.offsetX, event.offsetY); 	
+		leftTouchPos.copyFrom(leftTouchStartPos); 
+		leftVector.reset(0,0); 
+		mouseDown = true;
+		leftMouseDown = true;
+	}
+	else{
+		rightTouchStartPos.reset(event.offsetX, event.offsetY); 	
+		rightTouchPos.copyFrom(leftTouchStartPos); 
+		rightVector.reset(0,0); 
+		mouseDown = true;
+		leftMouseDown = false;
+	}
+}
+ 
+function onTouchMove(e) {
+	 // Prevent the browser from doing its default thing (scroll, zoom)
+	e.preventDefault();
+	
+	for(var i = 0; i<e.changedTouches.length; i++){
+		var touch =e.changedTouches[i]; 
+		if(leftTouchID == touch.identifier)		{
+			leftTouchPos.reset(touch.clientX, touch.clientY); 
+			leftVector.copyFrom(leftTouchPos); 
+			leftVector.minusEq(leftTouchStartPos);
+			sendFlag = true;
+		}
+		else if(rightTouchID == touch.identifier)		{
+			rightTouchPos.reset(touch.clientX, touch.clientY); 
+			rightVector.copyFrom(rightTouchPos); 
+			rightVector.minusEq(rightTouchStartPos);
+			sendFlag = true;
+		}
+	}
+	
+	touches = e.touches; 
+	
+} 
+
+function onMouseMove(event) {
+
+	mouseX = event.offsetX;
+	mouseY = event.offsetY;
+	if(mouseDown){
+		if(leftMouseDown){
+			leftTouchPos.reset(event.offsetX, event.offsetY);
+			leftVector.copyFrom(leftTouchPos);
+			leftVector.minusEq(leftTouchStartPos);
+		}
+		else{
+			rightTouchPos.reset(event.offsetX, event.offsetY); 
+			rightVector.copyFrom(rightTouchPos); 
+			rightVector.minusEq(rightTouchStartPos); 	
+		}
+		sendFlag = true;
+	}
+	
+}
+ 
+function onTouchEnd(e) { 
+   
+   	touches = e.touches; 
+
+	for(var i = 0; i<e.changedTouches.length; i++){
+		var touch =e.changedTouches[i]; 
+		if(leftTouchID == touch.identifier)
+		{
+			leftTouchID = -1; 
+			leftVector.reset(0,0);
+			leftMot = rightMot = 0;
+			sendFlag = true;
+			break; 		
+		}
+		else if(rightTouchID == touch.identifier)
+		{
+			rightTouchID = -1; 
+			rightVector.reset(0,0);
+			leftMot = rightMot = 0;
+			sendFlag = true;
+			break; 		
+		}		
+	}
+   
+}
+
+function onMouseUp(event) { 
+
+	leftVector.reset(0,0);
+	rightVector.reset(0,0);
+	leftMot = rightMot = 0;
+	mouseDown = false;
+	sendFlag = true;
+}
+
+/*
+Source for keyboard detection: Braden Best:
+https://stackoverflow.com/questions/5203407/how-to-detect-if-multiple-keys-are-pressed-at-once-using-javascript
+*/	
+var map = {};
+onkeydown = onkeyup = function(e){
+    e = e || event; // to deal with IE
+    map[e.keyCode] = e.type == 'keydown';
+	
+	if(map[87] || map[38]){ // ArrowUp / W
+		leftVector.y = -200;
+	}
+	if(map[83] || map[40]){ // ArrowDown / S
+		leftVector.y = 200;
+	}
+	if(map[65] || map[37]){ // ArrowLeft / A
+		leftVector.x = -200;
+	}
+	if(map[68] || map[39]){ // ArrowRight / D
+		leftVector.x = 200;
+	}
+	if(map[81]){ // Q
+		rightVector.x = -255;
+	}
+	if(map[69]){ // E
+		rightVector.x = 255;
+	}
+	
+	if(!map[38] && !map[40] && !map[83] && !map[87]){ // ArrowUp/Down is not pressed
+		leftVector.y = 0;
+	}
+	if(!map[37] && !map[39] && !map[68] && !map[65]){ // ArrowLeft/Right is not pressed
+		leftVector.x = 0;
+	}
+	if(!map[81] && !map[69]){ // Q/E is not pressed
+		rightVector.x = 0;
+	}
+	sendFlag = true;
+}
+
+
+function setupCanvas() {
+	
+	canvas = document.createElement( 'canvas' );
+	c = canvas.getContext( '2d' );
+	container = document.createElement( 'div' );
+	container.className = "container";
+
+	document.body.appendChild( container );
+	container.appendChild(canvas);	
+
+	resetCanvas(); 
+	
+	c.strokeStyle = "#ffffff";
+	c.lineWidth =2;	
+}
+
+function mouseOver(minX, minY, maxX, maxY){
+	return(mouseX>minX&&mouseY>minY&&mouseX<maxX&&mouseY<maxY);
+}
+
+function sendControls(){
+	if(sendFlag == true){
+		if(rotate){
+			socket.emit('rot', parseFloat(leftVector.x/100), parseFloat(leftVector.y/100), parseFloat(rightVector.x/100));
+		}
+		else{ 
+			socket.emit('mov', parseFloat(leftVector.x/100), parseFloat(leftVector.y/100), parseFloat(rightVector.x/100));
+		}
+		sendFlag = false;
+	}
+}
+
+function shutdown() {
+    if(confirm("This will shutdown the Pi.\nAre you sure?")){
+		socket.emit('power', 1);
+		alert('Shutting down...\nPlease wait 20s before turning the power off.');
+	}
+}
+// Handle sit/stand button
+function handlePoseClick(cb) {
+  if (!cb.checked) {
+	// stand up
+	pose = 1;
+  } else {
+	// sit down
+	pose = 0;
+  }
+  socket.emit('pos', pose);
+}
+
+function handleGaitClick(cb) {
+  if (cb.checked) {
+	gait = 0;
+  } else {
+	gait = 1;
+  }
+  socket.emit('gait', gait);
+}
+
+function handleClawClick(cb) {
+  if (cb.checked) {
+	claw = 1;
+  } else {
+	claw = 0;
+  }
+  socket.emit('claw', claw);
+}
+
+function handleRotClick(cb) {
+  rotate = cb.checked;
+}
+
+</script>
+<body scroll="no" style="overflow: hidden">
+<center>
+
+<p id="stream"></p>
+
+<script>
+// This script automatically picks the right IP for the stream 
+// Thanks to wonx (github.com/wonx)
+host = window.location.hostname;
+//img = '<img src="http://' + host + ':9000/?action=stream" style="height:100vh;"/>';
+document.getElementById("stream").innerHTML = img;
+</script>
+
+</center>
+
+<div class="sidenav">
+  <center id="temp" style="padding:40%;">0°C</center>
+  <center id="volt" style="padding:40%;">0V</center>
+</div>
+
+<div class="sidenav" style="right:0;z-index: 2;">
+
+	<div class="off_button" type="button" onclick="shutdown()">OFF</div>
+	<!--<center class="cam_button" type="button" onclick="takePicture()"></center>-->  
+    <div class="switch">
+        <input id="cmn-toggle1"css class="cmn-toggle cmn-toggle-round-flat" type="checkbox" onclick="handlePoseClick(this)">
+        <label for="cmn-toggle1">POS</label>
+    </div>
+	<div class="switch">
+        <input id="cmn-toggle2"css class="cmn-toggle cmn-toggle-round-flat" type="checkbox" onclick="handleGaitClick(this)">
+        <label for="cmn-toggle2">GAIT</label>
+    </div>
+	
+	<div class="switch">
+        <input id="cmn-toggle4"css class="cmn-toggle cmn-toggle-round-flat" type="checkbox" onclick="handleClawClick(this)">
+        <label for="cmn-toggle4">CLAW</label>
+    </div>
+	<div class="switch">
+        <input id="cmn-toggle3"css class="cmn-toggle cmn-toggle-round-flat" type="checkbox" onclick="handleRotClick(this)">
+        <label for="cmn-toggle3">ROTATE</label>
+    </div>
+  
+</div>
+
+
+
+	
+</div>
+
+</body>
+</html>
