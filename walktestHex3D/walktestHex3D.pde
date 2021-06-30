@@ -115,9 +115,7 @@ void draw() {
 
   rotateX(-camRotY);
   rotateZ(camRotX);
-  
-  jY = 0.2;
-  
+   
   // Calculate rotation and translation of ground below robot
   float sinG = sin(gR/100);
   float cosG = cos(gR/100); 
